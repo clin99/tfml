@@ -1,0 +1,32 @@
+#IncludeRegexLine: ^[ 	]*[#%][ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+..//taskflow/threadpool/threadpool_cxx14.hpp
+deque
+-
+vector
+-
+thread
+-
+future
+-
+unordered_set
+-
+type_traits
+-
+utility
+-
+
+/Users/clin99/cpp-taskflow/example/threadpool_cxx14.cpp
+taskflow/threadpool/threadpool_cxx14.hpp
+-
+iostream
+-
+random
+-
+

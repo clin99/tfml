@@ -1,0 +1,1 @@
+/usr/local/bin/g++-8   -Wall -O2 -Wl,-search_paths_first -Wl,-headerpad_max_install_names  CMakeFiles/executor.dir/example/executor.cpp.o  -o ../example/executor 

@@ -1,0 +1,21 @@
+builder 1 0.0160151
+dispatch 1 1.01045
+executor 1 0.55963
+parallel_for 1 0.115145
+reduce 1 0.0926542
+reduce_min 1 0.140214
+reduce_max 1 0.13888
+joined_subflow 1 0.00854243
+detached_subflow 1 0.00588434
+WorkStealingQueue.Owner 1 0.431507
+WorkStealingQueue.1Thief 1 1.00419
+WorkStealingQueue.2Thieves 1 1.0165
+WorkStealingQueue.3Thieves 1 1.03979
+WorkStealingQueue.4Thieves 1 1.27233
+simple_threadpool 1 28.5614
+proactive_threadpool 1 30.9029
+speculative_threadpool 1 28.8119
+work_stealing_threadpool 1 12.0433
+threadpool_cxx14_basic 1 0.0201437
+threadpool_cxx14_wait_for_all 1 1.32589
+---
