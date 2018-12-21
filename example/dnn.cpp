@@ -409,7 +409,7 @@ struct MNIST {
   size_t epoch {0};
   size_t batch_size {1};
 
-  tf::Taskflow tf {4};
+  tf::Taskflow tf {1};
 };
 
 int main(){
