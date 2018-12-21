@@ -6,6 +6,7 @@
 #include <random>
 #include <cmath>
 
+#include <omp.h>
 #include <Eigen/Dense>
 
 // Function: read_mnist_label
@@ -432,6 +433,10 @@ struct MNIST {
     std::mt19937 gen(rd());
     auto iter_num = images.rows()/batch_size;
 
+    omp_set_num_threads(4);
+    Eigen::setNbThreads(4);
+    std::cout << Eigen::nbThreads() << "\n";
+
     for(auto e=0; e<epoch; e++) { 
       std::cout << e << ' ';
       auto t1 = std::chrono::high_resolution_clock::now();
@@ -595,8 +600,8 @@ int main(){
 
   MNIST dnn;
   dnn.epoch_num(30).batch(100).learning_rate(0.001);
-  dnn.add_layer(784, 100, Activation::RELU);
-  dnn.add_layer(100, 10, Activation::NONE); 
+  dnn.add_layer(784, 400, Activation::RELU);
+  dnn.add_layer(400, 10, Activation::NONE); 
 
   //dnn.run();
   dnn.seq_run();
