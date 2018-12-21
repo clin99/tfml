@@ -104,6 +104,10 @@ auto read_mnist_image(const std::experimental::filesystem::path& path) {
   return images;
 }
 
+
+// ------------------------------------------------------------------------------------------------
+
+
 enum class Activation {
   NONE,
   RELU,
@@ -115,6 +119,23 @@ enum class Optimizer {
   GradientDescent,
   Adam
 };
+
+
+// Procedure: sigmoid
+inline void sigmoid(Eigen::MatrixXf& x) {
+  x = ((1.0f + (-x).array().exp()).inverse()).matrix();
+}
+
+// Procedure: relu
+inline void relu(Eigen::MatrixXf& x) {
+  for(int j=0; j<x.cols(); ++j) {
+    for(int i=0; i<x.rows(); ++i) {
+      if(x(i, j) <= 0.0f) {
+        x(i, j) = 0.0f;
+      }   
+    }   
+  }
+}
 
 
 void activate(float &v, Activation act) {
@@ -186,6 +207,9 @@ struct MNIST {
   MNIST() {
     images = read_mnist_image("./train-images.data");
     labels = read_mnist_label("./train-labels.data");
+
+    test_images = read_mnist_image("./t10k-images-idx3-ubyte");
+    test_labels = read_mnist_label("./t10k-labels-idx1-ubyte");
   }
 
   auto& add_layer(size_t in_degree, size_t out_degree, Activation act) {
@@ -212,28 +236,36 @@ struct MNIST {
               layers[j].nodes[i].forward();
             }
           )
-        );
+        ).name("I" + std::to_string(j) + "_N" + std::to_string(i));
       }
+
+      //if(j > 0) {
+      //  for(auto &t: l.tasks) {
+      //    t.gather(layers[j-1].tasks);
+      //  }
+      //}
+
       if(j > 0) {
-        for(auto &t: l.tasks) {
-          t.gather(layers[j-1].tasks);
-        }
+        sync_tasks.back().broadcast(layers[j].tasks);
+      }
+      if(j != layers.size() - 1) {
+        auto& t = sync_tasks.emplace_back(tf.silent_emplace([](){}));
+        t.gather(layers[j].tasks);
       }
     }
 
     input_layer = tf.silent_emplace(
       [&]() {
-        beg_row += batch_size;
-        if(beg_row >= images.rows()) {
-          beg_row = 0;
-        }
+        //beg_row += batch_size;
+        //if(beg_row >= images.rows()) {
+        //  beg_row = 0;
+        //}
       }
-    );
+    ).name("Input");
 
     input_layer.broadcast(layers[0].tasks);
   }
 
-  // https://github.com/twhuang-uiuc/DtCraft/blob/master/src/ml/dnn.cpp
   void build_taskflow() {
 
     // Set up forward tasks first
@@ -253,32 +285,46 @@ struct MNIST {
           delta.row(k).maxCoeff(&label(k));
         }
 
-        if(beg_row == 0) {
+        if(beg_row == 0 && false) { 
+          Eigen::MatrixXf res = test_images; 
+          auto t1 = std::chrono::high_resolution_clock::now();
+          for(size_t i=0; i<layers->size(); i++) {
+            res = res * Ws[i] + Bs[i].replicate(res.rows(), 1);
+            if((*layers)[i].act == Activation::RELU) {
+              relu(res);
+            }
+            else if((*layers)[i].act == Activation::SIGMOID) {
+              sigmoid(res);
+            }
+          }
+          auto t2 = std::chrono::high_resolution_clock::now();
+          auto diff = std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count();
+          //std::cout << "Testing: " << diff << " us\n";
+
           size_t cnt {0};
-          for(int k=0; k<label.rows(); k++) {
-            if(label[k] == labels[k+beg_row]) {
+          for(int k=0; k<res.rows(); k++) {
+            int pred ; 
+            res.row(k).maxCoeff(&pred);
+            if(pred == test_labels[k]) {
               cnt ++;
             }
           }
-          std::cout << "correct: " << cnt << '\n';
+          std::cout << "correct: " << cnt << '/' << res.rows() << '\n';
+
+          //size_t cnt {0};
+          //for(int k=0; k<label.rows(); k++) {
+          //  if(label[k] == labels[k+beg_row]) {
+          //    cnt ++;
+          //  }
+          //}
+          //std::cout << "correct: " << cnt << '\n';
         }
 
         for(size_t i=beg_row, j=0; j<batch_size; i++, j++) {
           delta(j, labels[i]) -= 1.0;
         }
-
-        //if(epoch%100 == 0) {
-        //  if(pred == labels[cur_img])
-        //    std::cout << "\033[0;31m" << pred << ' ' << labels[cur_img] << "\033[0m" << '\n'; 
-        //  else
-        //    std::cout << pred << ' ' << labels[cur_img] << '\n'; 
-        //  epoch = 1;
-        //}
-        //else {
-        //  epoch ++;
-        //}
       }      
-    );
+    ).name("Output");
 
     output_layer.gather(layers.back().tasks);
 
@@ -297,10 +343,10 @@ struct MNIST {
                   dB[i](0, j) += D[i](k, j);
                 }
                 dW[i].col(j) = Ys[i-1].transpose() * D[i].col(j);
-                Bs[i](0, j) -= lrate*(dB[i](0, j) + decay*dB[i](0, j)); 
+                Bs[i](0, j) -= lrate*(dB[i](0, j) + decay*Bs[i](0, j)); 
               }
             )
-          );
+          ).name("O" + std::to_string(i) + "_N" + std::to_string(j));
           output_layer.precede(l.backward_tasks.back());
         }
         else { 
@@ -317,7 +363,7 @@ struct MNIST {
                   D[i](k, j) = D[i](k, j) * Ys[i](k, j);
                   dB[i](0, j) += D[i](k, j);
                 }
-                Bs[i](0, j) -= lrate*(dB[i](0, j) + decay*dB[i](0, j)); 
+                Bs[i](0, j) -= lrate*(dB[i](0, j) + decay*Bs[i](0, j)); 
 
                 if(i > 0) {
                   dW[i].col(j) = Ys[i-1].transpose() * D[i].col(j);
@@ -328,18 +374,22 @@ struct MNIST {
                 }
               }
             )
-          );
+          ).name("O" + std::to_string(i) + "_N" + std::to_string(j));
         }
       }
     }
 
     // Build precedence
+    //for(size_t i=layers.size()-1; i>0; i--) {
+    //  for(auto& t: layers[i].backward_tasks) {
+    //    t.broadcast(layers[i-1].backward_tasks);
+    //  }
+    //}
     for(size_t i=layers.size()-1; i>0; i--) {
-      for(auto& t: layers[i].backward_tasks) {
-        t.broadcast(layers[i-1].backward_tasks);
-      }
+      auto& t = sync_tasks.emplace_back(tf.silent_emplace([](){}));
+      t.gather(layers[i].backward_tasks);
+      t.broadcast(layers[i-1].backward_tasks);
     }
-
   }
 
 
@@ -354,21 +404,141 @@ struct MNIST {
       std::cout << i << ' ';
       auto t1 = std::chrono::high_resolution_clock::now();
       for(auto j=0; j<iter_num; j++) {
-        tf.wait_for_all();  // block until finished 
+        tf.wait_for_all();  // block until finished  
+        beg_row += batch_size;
+        if(beg_row >= images.rows()) {
+          beg_row = 0;
+        }
       }
       auto t2 = std::chrono::high_resolution_clock::now();
       auto diff = std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count();
       std::cout << diff << " us\n";
 
-      Eigen::PermutationMatrix<Eigen::Dynamic, Eigen::Dynamic> p(images.rows());
-      p.setIdentity();
-      std::shuffle(p.indices().data(), p.indices().data() + p.indices().size(), gen);
-      images = p * images;
-      labels = p * labels;
-      beg_row = 0;
+      {
+        Eigen::PermutationMatrix<Eigen::Dynamic, Eigen::Dynamic> p(images.rows());
+        p.setIdentity();
+        std::shuffle(p.indices().data(), p.indices().data() + p.indices().size(), gen);
+        images = p * images;
+        labels = p * labels;
+        beg_row = 0;
+      }
     }
   }
 
+
+  void seq_run() {
+    std::cout << "Seq run\n";
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    auto iter_num = images.rows()/batch_size;
+
+    for(auto e=0; e<epoch; e++) { 
+      std::cout << e << ' ';
+      auto t1 = std::chrono::high_resolution_clock::now();
+      for(auto it=0; it<iter_num; it++) {
+        // Foward propagation
+        for(size_t i=0; i<layers.size(); i++) {
+          if(i == 0){
+            Ys[i] = images.middleRows(beg_row, batch_size) * Ws[i] + Bs[i].replicate(batch_size, 1);
+          }
+          else {
+            Ys[i] = Ys[i-1] * Ws[i] + Bs[i].replicate(Ys[i-1].rows(), 1);
+          }
+
+          for(size_t j=0; j<Ys[i].rows(); j++) {
+            for(size_t k=0; k<Ys[i].cols(); k++) {
+              activate(Ys[i](j, k), layers[i].act);
+            }
+          }
+        }
+
+        // Loss 
+        delta = Ys.back();
+        delta = (delta - delta.rowwise().maxCoeff().replicate(1, delta.cols())).array().exp().matrix();
+        delta = delta.cwiseQuotient(delta.rowwise().sum().replicate(1, delta.cols()));
+
+        if(beg_row == 0 && false) { 
+          Eigen::MatrixXf res = test_images; 
+          auto t1 = std::chrono::high_resolution_clock::now();
+          for(size_t i=0; i<layers.size(); i++) {
+            res = res * Ws[i] + Bs[i].replicate(res.rows(), 1);
+            if(layers[i].act == Activation::RELU) {
+              relu(res);
+            }
+            else if(layers[i].act == Activation::SIGMOID) {
+              sigmoid(res);
+            }
+          }
+          auto t2 = std::chrono::high_resolution_clock::now();
+          auto diff = std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count();
+          //std::cout << "Testing: " << diff << " us\n";
+
+          size_t cnt {0};
+          for(int k=0; k<res.rows(); k++) {
+            int pred ; 
+            res.row(k).maxCoeff(&pred);
+            if(pred == test_labels[k]) {
+              cnt ++;
+            }
+          }
+          std::cout << "correct: " << cnt << '/' << res.rows() << '\n';
+        }
+
+
+        Eigen::VectorXi label(delta.rows());
+        for(size_t i=beg_row, j=0; j<batch_size; i++, j++) {
+          delta(j, labels[i]) -= 1.0;
+        }
+
+        // Backward propagation
+        for(int i=layers.size()-1; i>=0; i--) {
+          auto &l = layers[i];
+          for(size_t j=0; j<Ys[i].rows();  j++) {
+            for(size_t k=0; k<Ys[i].cols(); k++) {
+              deactivate(Ys[i](j, k), l.act);
+            }
+          }
+          delta = delta.cwiseProduct(Ys[i]);
+
+          dB[i] = delta.colwise().sum();
+          if(i > 0) {
+            dW[i] = Ys[i-1].transpose() * delta;
+          }
+          else {
+            dW[i] = images.middleRows(beg_row, batch_size).transpose() * delta;
+          }
+
+          if(i > 0) {
+            delta = delta * Ws[i].transpose();
+          }
+        }
+
+        // Update parameters
+        for(int i=layers.size()-1; i>=0; i--) {
+          Ws[i] -= lrate*(dW[i] + decay*Ws[i]);
+          Bs[i] -= lrate*(dB[i] + decay*Bs[i]); 
+        }
+
+        beg_row += batch_size;
+        if(beg_row >= images.rows()) {
+          beg_row = 0;
+        }
+      }
+      auto t2 = std::chrono::high_resolution_clock::now();
+      auto diff = std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count();
+      std::cout << diff << " us\n";
+
+      // Shuffle input
+      {
+        Eigen::PermutationMatrix<Eigen::Dynamic, Eigen::Dynamic> p(images.rows());
+        p.setIdentity();
+        std::shuffle(p.indices().data(), p.indices().data() + p.indices().size(), gen);
+        images = p * images;
+        labels = p * labels;
+        beg_row = 0;
+      }
+    }
+  }
 
   auto& epoch_num(size_t e) {
     epoch = e;
@@ -394,9 +564,16 @@ struct MNIST {
   std::vector<Eigen::MatrixXf> D;
 
   std::vector<Layer> layers;
+  std::vector<tf::Task> sync_tasks;
+
+  // Training images # = 60000 x 784 (28 x 28)
   Eigen::MatrixXf images;
   Eigen::VectorXi labels;
   Eigen::MatrixXf delta;
+
+  // Testing images # = 10000 x 784 (28 x 28)
+  Eigen::MatrixXf test_images;
+  Eigen::VectorXi test_labels;
 
   size_t beg_row {0};
 
@@ -409,28 +586,20 @@ struct MNIST {
   size_t epoch {0};
   size_t batch_size {1};
 
-  tf::Taskflow tf {1};
+  tf::Taskflow tf {4};
 };
 
 int main(){
   
   ::srand(1);
 
-
   MNIST dnn;
   dnn.epoch_num(30).batch(100).learning_rate(0.001);
-  dnn.add_layer(784, 30, Activation::RELU);
-  dnn.add_layer(30, 10, Activation::NONE); 
+  dnn.add_layer(784, 100, Activation::RELU);
+  dnn.add_layer(100, 10, Activation::NONE); 
 
-  //dnn.add_layer(784, 100, Activation::RELU);
-  //dnn.add_layer(100, 30, Activation::SIGMOID);
-  //dnn.add_layer(30, 20, Activation::NONE);
-  //dnn.add_layer(20, 10, Activation::NONE);
-
-  dnn.run();
-
-
-  // Training images # = 60000 
+  //dnn.run();
+  dnn.seq_run();
 
   return 0;
 }
