@@ -1,5 +1,22 @@
 #include "dnn.hpp"
 
+#include "tbb.hpp"
+#include "tf.hpp"
+#include "seq.hpp"
+
+#define BENCHMARK(TITLE)                                               \
+  {                                                                    \
+    auto dnn {build_dnn()};                                            \
+    printf("Benchmark " #TITLE "\n");                                  \
+    auto t1 = std::chrono::high_resolution_clock::now();               \
+    run_##TITLE(dnn);                                                  \
+    auto t2 = std::chrono::high_resolution_clock::now();               \
+    std::cout << "Benchmark runtime: " << time_diff(t1, t2) << " s\n"; \
+    dnn.validate(); \
+  }
+
+
+
 int main(int argc, char *argv[]){
   
   int sel = 0;
@@ -13,9 +30,9 @@ int main(int argc, char *argv[]){
   }
 
   switch(sel) {
-    case 1:  measure_taskflow(); break; 
-    case 2:  measure_tbb(); break;
-    default: measure_sequential(); break;
+    case 1:  BENCHMARK(taskflow);   break; 
+    case 2:  BENCHMARK(tbb);        break;
+    default: BENCHMARK(sequential); break;
   };
 
   return 0;
