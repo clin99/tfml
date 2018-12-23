@@ -7,7 +7,7 @@
 #define BENCHMARK(LIB)                                                 \
   {                                                                    \
     auto dnn {build_dnn()};                                            \
-    printf("Benchmark " #LIB "\n");                                    \
+    std::cout << "Benchmark " #LIB << '\n';                            \
     auto t1 = std::chrono::high_resolution_clock::now();               \
     run_##LIB(dnn);                                                    \
     auto t2 = std::chrono::high_resolution_clock::now();               \
