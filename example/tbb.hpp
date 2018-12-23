@@ -1,7 +1,8 @@
 #pragma once
 
 #include "dnn.hpp"
-#include <thread>  // for std::hardware_concurrency
+#include <thread>  // std::hardware_concurrency 
+#include <memory>  // unique_ptr
 #include <tbb/task_scheduler_init.h>
 #include <tbb/flow_graph.h>
 

@@ -4,7 +4,6 @@
 #include <experimental/filesystem>
 #include <fstream>
 #include <random>
-#include <memory>
 
 #include <Eigen/Dense>
 
