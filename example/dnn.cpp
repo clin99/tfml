@@ -4,12 +4,12 @@
 #include "tf.hpp"
 #include "seq.hpp"
 
-#define BENCHMARK(TITLE)                                               \
+#define BENCHMARK(LIB)                                                 \
   {                                                                    \
     auto dnn {build_dnn()};                                            \
-    printf("Benchmark " #TITLE "\n");                                  \
+    printf("Benchmark " #LIB "\n");                                    \
     auto t1 = std::chrono::high_resolution_clock::now();               \
-    run_##TITLE(dnn);                                                  \
+    run_##LIB(dnn);                                                    \
     auto t2 = std::chrono::high_resolution_clock::now();               \
     std::cout << "Benchmark runtime: " << time_diff(t1, t2) << " s\n"; \
     dnn.validate(); \
