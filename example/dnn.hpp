@@ -11,7 +11,7 @@
 inline auto read_mnist_label(const std::experimental::filesystem::path& path) {
   
   // Helper lambda.
-	auto reverse_int = [](int i) {
+  auto reverse_int = [](int i) {
     unsigned char c1, c2, c3, c4;
     c1 = i         & 255;
     c2 = (i >> 8)  & 255;
@@ -49,7 +49,7 @@ inline auto read_mnist_label(const std::experimental::filesystem::path& path) {
 inline auto read_mnist_image(const std::experimental::filesystem::path& path) {
   
   // Helper lambda.
-	auto reverse_int = [] (int i) {
+  auto reverse_int = [] (int i) {
     unsigned char c1, c2, c3, c4;
     c1 = i         & 255;
     c2 = (i >> 8)  & 255;
@@ -172,6 +172,7 @@ inline void deactivate(Eigen::MatrixXf& mat, Activation act) {
 
 struct MNIST {
 
+  // Ctor
   MNIST() {
     images = read_mnist_image("./train-images.data");
     labels = read_mnist_label("./train-labels.data");
@@ -259,165 +260,9 @@ struct MNIST {
   }
 
  
-  void seqential() {
-    const auto iter_num = images.rows()/batch_size;
-
-    for(auto e=0; e<epoch; e++) { 
-      for(auto it=0; it<iter_num; it++) {
-        // Foward propagation
-        for(size_t i=0; i<acts.size(); i++) {
-          if(i == 0){
-            forward(i, images.middleRows(beg_row, batch_size));
-          }
-          else {
-            forward(i, Ys[i-1]);
-          }
-        }
-
-        // Calculate loss  
-        loss(labels);
-
-        if(beg_row == 0 && false) { 
-          validate();
-        }
-
-        // Backward propagation
-        for(int i=acts.size()-1; i>=0; i--) {
-          if(i > 0) {
-            backward(i, Ys[i-1].transpose());
-          }
-          else {
-            backward(i, images.middleRows(beg_row, batch_size).transpose());
-          }
-        }
-
-        // Update parameters
-        for(int i=acts.size()-1; i>=0; i--) {
-          update(i);
-        }
-
-        beg_row += batch_size;
-        if(beg_row >= images.rows()) {
-          beg_row = 0;
-        }
-      }
-
-      // Shuffle input 
-      shuffle(images, labels, images.rows());
-    }
-  }
-
-
-
-
-  void taskflow() {
-    tf::Taskflow tf {4};
-
-    std::vector<tf::Task> forward_tasks;
-    std::vector<tf::Task> backward_tasks;
-    std::vector<tf::Task> update_tasks;
-    std::vector<tf::Task> shuffle_tasks;
-
-    const auto num_storage = 4;
-
-    std::vector<Eigen::MatrixXf> mats(num_storage, images);
-    std::vector<Eigen::VectorXi> vecs(num_storage, labels);
- 
-    // Create task flow graph
-    const auto iter_num = images.rows()/batch_size;
-
-    for(auto e=0; e<epoch; e++) {
-      for(auto i=0; i<iter_num; i++) {
-        auto& f_task = forward_tasks.emplace_back(
-          tf.silent_emplace(
-            [&, iter = i, e=e%num_storage]() {
-              if(iter == 0 && false) validate();
-
-              if(iter != 0) {
-                beg_row += batch_size;
-                if(beg_row >= images.rows()) {
-                  beg_row = 0;
-                }
-              }
-              for(size_t i=0; i<acts.size(); i++) {
-                if(i == 0){
-                  forward(i, mats[e].middleRows(beg_row, batch_size));
-                }
-                else {
-                  forward(i, Ys[i-1]);
-                }
-              }
-
-              loss(vecs[e]);
-            }
-          ) 
-        ).name("e" + std::to_string(e) + "_F"+std::to_string(i));
-
-        if(i == 0 && e != 0) {
-          auto sz = update_tasks.size();
-          for(auto j=1; j<=acts.size() ;j++) {
-            update_tasks[sz-j].precede(f_task);
-          }         
-        }
-
-        if(i != 0) {
-          auto sz = update_tasks.size();
-          for(auto j=1; j<=acts.size() ;j++) {
-            update_tasks[sz-j].precede(f_task);
-          }
-        }
-
-        for(int j=acts.size()-1; j>=0; j--) {
-          // backward propagation
-          auto& b_task = backward_tasks.emplace_back(
-            tf.silent_emplace(
-              [&, i=j, e=e%num_storage] () {
-                if(i > 0) {
-                  backward(i, Ys[i-1].transpose());       
-                }
-                else {
-                  backward(i, mats[e].middleRows(beg_row, batch_size).transpose());
-                }
-              }
-            )
-          ).name("e" + std::to_string(e) + "_L" + std::to_string(i) +"_B" + std::to_string(j));
-          // update weight 
-          auto& u_task = update_tasks.emplace_back(
-            tf.silent_emplace([&, i=j] () {update(i);})
-          ).name("e" + std::to_string(e) + "_L" + std::to_string(i) +"_U" + std::to_string(j));
-
-          if(j == acts.size() - 1) {
-            f_task.precede(b_task);
-          }
-          else {
-            backward_tasks[backward_tasks.size()-2].precede(b_task).precede(update_tasks[update_tasks.size()-2]);
-          }
-        } // End of backward propagation 
-        backward_tasks.back().precede(update_tasks.back()); 
-      } // End of all iterations (task flow graph creation)
-
-
-      if(e == 0) {
-        // No need to shuffle in first epoch
-        shuffle_tasks.emplace_back(tf.silent_emplace([](){}))
-                     .precede(forward_tasks[forward_tasks.size()-iter_num])           
-                     .name("e" + std::to_string(e) + "_S" + std::to_string(e%num_storage));
-      }
-      else {
-        auto& t = shuffle_tasks.emplace_back(
-          tf.silent_emplace([&, e=e%num_storage]() {shuffle(mats[e], vecs[e], images.rows());})
-        ).precede(forward_tasks[forward_tasks.size()-iter_num])           
-         .name("e" + std::to_string(e) + "_S" + std::to_string(e%num_storage));
-
-        if(e >= num_storage) {
-          shuffle_tasks[e-num_storage].precede(t);
-        }
-      }
-    } // End of all epoch
-
-    tf.wait_for_all();
-  }
-
+  void seqential();
+  void taskflow();
+  void tbb();
 
   // Parameter functions --------------------------------------------------------------------------
   auto& epoch_num(size_t e) {
@@ -461,7 +306,278 @@ struct MNIST {
 };
 
 
-auto build_dnn() {
+
+void MNIST::seqential() {
+  const auto iter_num = images.rows()/batch_size;
+
+  for(auto e=0; e<epoch; e++) { 
+    for(auto it=0; it<iter_num; it++) {
+      // Foward propagation
+      for(size_t i=0; i<acts.size(); i++) {
+        if(i == 0){
+          forward(i, images.middleRows(beg_row, batch_size));
+        }
+        else {
+          forward(i, Ys[i-1]);
+        }
+      }
+
+      // Calculate loss  
+      loss(labels);
+
+      if(beg_row == 0 && false) { 
+        validate();
+      }
+
+      // Backward propagation
+      for(int i=acts.size()-1; i>=0; i--) {
+        if(i > 0) {
+          backward(i, Ys[i-1].transpose());
+        }
+        else {
+          backward(i, images.middleRows(beg_row, batch_size).transpose());
+        }
+      }
+
+      // Update parameters
+      for(int i=acts.size()-1; i>=0; i--) {
+        update(i);
+      }
+
+      // Get next batch
+      beg_row += batch_size;
+      if(beg_row >= images.rows()) {
+        beg_row = 0;
+      }
+    } // End of iterations
+    // Shuffle input 
+    shuffle(images, labels, images.rows());
+  } // End of epoch
+}
+
+
+void MNIST::taskflow() {
+  tf::Taskflow tf {4};
+
+  std::vector<tf::Task> forward_tasks;
+  std::vector<tf::Task> backward_tasks;
+  std::vector<tf::Task> update_tasks;
+  std::vector<tf::Task> shuffle_tasks;
+
+  const auto num_storage = 4;
+
+  std::vector<Eigen::MatrixXf> mats(num_storage, images);
+  std::vector<Eigen::VectorXi> vecs(num_storage, labels);
+
+  // Create task flow graph
+  const auto iter_num = images.rows()/batch_size;
+
+  for(auto e=0; e<epoch; e++) {
+    for(auto i=0; i<iter_num; i++) {
+      auto& f_task = forward_tasks.emplace_back(
+        tf.silent_emplace(
+          [&, iter = i, e=e%num_storage]() {
+            if(iter == 0 && false) validate();
+
+            if(iter != 0) {
+              beg_row += batch_size;
+              if(beg_row >= images.rows()) {
+                beg_row = 0;
+              }
+            }
+            for(size_t i=0; i<acts.size(); i++) {
+              if(i == 0){
+                forward(i, mats[e].middleRows(beg_row, batch_size));
+              }
+              else {
+                forward(i, Ys[i-1]);
+              }
+            }
+
+            loss(vecs[e]);
+          }
+        ) 
+      ).name("e" + std::to_string(e) + "_F"+std::to_string(i));
+
+      if(i == 0 && e != 0) {
+        auto sz = update_tasks.size();
+        for(auto j=1; j<=acts.size() ;j++) {
+          update_tasks[sz-j].precede(f_task);
+        }         
+      }
+
+      if(i != 0) {
+        auto sz = update_tasks.size();
+        for(auto j=1; j<=acts.size() ;j++) {
+          update_tasks[sz-j].precede(f_task);
+        }
+      }
+
+      for(int j=acts.size()-1; j>=0; j--) {
+        // backward propagation
+        auto& b_task = backward_tasks.emplace_back(
+          tf.silent_emplace(
+            [&, i=j, e=e%num_storage] () {
+              if(i > 0) {
+                backward(i, Ys[i-1].transpose());       
+              }
+              else {
+                backward(i, mats[e].middleRows(beg_row, batch_size).transpose());
+              }
+            }
+          )
+        ).name("e" + std::to_string(e) + "_L" + std::to_string(i) +"_B" + std::to_string(j));
+        // update weight 
+        auto& u_task = update_tasks.emplace_back(
+          tf.silent_emplace([&, i=j] () {update(i);})
+        ).name("e" + std::to_string(e) + "_L" + std::to_string(i) +"_U" + std::to_string(j));
+
+        if(j == acts.size() - 1) {
+          f_task.precede(b_task);
+        }
+        else {
+          backward_tasks[backward_tasks.size()-2].precede(b_task).precede(update_tasks[update_tasks.size()-2]);
+        }
+      } // End of backward propagation 
+      backward_tasks.back().precede(update_tasks.back()); 
+    } // End of all iterations (task flow graph creation)
+
+
+    if(e == 0) {
+      // No need to shuffle in first epoch
+      shuffle_tasks.emplace_back(tf.silent_emplace([](){}))
+                   .precede(forward_tasks[forward_tasks.size()-iter_num])           
+                   .name("e" + std::to_string(e) + "_S" + std::to_string(e%num_storage));
+    }
+    else {
+      auto& t = shuffle_tasks.emplace_back(
+        tf.silent_emplace([&, e=e%num_storage]() {shuffle(mats[e], vecs[e], images.rows());})
+      ).precede(forward_tasks[forward_tasks.size()-iter_num])           
+       .name("e" + std::to_string(e) + "_S" + std::to_string(e%num_storage));
+
+      if(e >= num_storage) {
+        shuffle_tasks[e-num_storage].precede(t);
+      }
+    }
+  } // End of all epoch
+
+  tf.wait_for_all();
+}
+
+
+void MNIST::tbb() {
+  tf::Taskflow tf {4};
+
+  std::vector<tf::Task> forward_tasks;
+  std::vector<tf::Task> backward_tasks;
+  std::vector<tf::Task> update_tasks;
+  std::vector<tf::Task> shuffle_tasks;
+
+  const auto num_storage = 4;
+
+  std::vector<Eigen::MatrixXf> mats(num_storage, images);
+  std::vector<Eigen::VectorXi> vecs(num_storage, labels);
+
+  // Create task flow graph
+  const auto iter_num = images.rows()/batch_size;
+
+  for(auto e=0; e<epoch; e++) {
+    for(auto i=0; i<iter_num; i++) {
+      auto& f_task = forward_tasks.emplace_back(
+        tf.silent_emplace(
+          [&, iter = i, e=e%num_storage]() {
+            if(iter == 0 && false) validate();
+
+            if(iter != 0) {
+              beg_row += batch_size;
+              if(beg_row >= images.rows()) {
+                beg_row = 0;
+              }
+            }
+            for(size_t i=0; i<acts.size(); i++) {
+              if(i == 0){
+                forward(i, mats[e].middleRows(beg_row, batch_size));
+              }
+              else {
+                forward(i, Ys[i-1]);
+              }
+            }
+
+            loss(vecs[e]);
+          }
+        ) 
+      ).name("e" + std::to_string(e) + "_F"+std::to_string(i));
+
+      if(i == 0 && e != 0) {
+        auto sz = update_tasks.size();
+        for(auto j=1; j<=acts.size() ;j++) {
+          update_tasks[sz-j].precede(f_task);
+        }         
+      }
+
+      if(i != 0) {
+        auto sz = update_tasks.size();
+        for(auto j=1; j<=acts.size() ;j++) {
+          update_tasks[sz-j].precede(f_task);
+        }
+      }
+
+      for(int j=acts.size()-1; j>=0; j--) {
+        // backward propagation
+        auto& b_task = backward_tasks.emplace_back(
+          tf.silent_emplace(
+            [&, i=j, e=e%num_storage] () {
+              if(i > 0) {
+                backward(i, Ys[i-1].transpose());       
+              }
+              else {
+                backward(i, mats[e].middleRows(beg_row, batch_size).transpose());
+              }
+            }
+          )
+        ).name("e" + std::to_string(e) + "_L" + std::to_string(i) +"_B" + std::to_string(j));
+        // update weight 
+        auto& u_task = update_tasks.emplace_back(
+          tf.silent_emplace([&, i=j] () {update(i);})
+        ).name("e" + std::to_string(e) + "_L" + std::to_string(i) +"_U" + std::to_string(j));
+
+        if(j == acts.size() - 1) {
+          f_task.precede(b_task);
+        }
+        else {
+          backward_tasks[backward_tasks.size()-2].precede(b_task).precede(update_tasks[update_tasks.size()-2]);
+        }
+      } // End of backward propagation 
+      backward_tasks.back().precede(update_tasks.back()); 
+    } // End of all iterations (task flow graph creation)
+
+
+    if(e == 0) {
+      // No need to shuffle in first epoch
+      shuffle_tasks.emplace_back(tf.silent_emplace([](){}))
+                   .precede(forward_tasks[forward_tasks.size()-iter_num])           
+                   .name("e" + std::to_string(e) + "_S" + std::to_string(e%num_storage));
+    }
+    else {
+      auto& t = shuffle_tasks.emplace_back(
+        tf.silent_emplace([&, e=e%num_storage]() {shuffle(mats[e], vecs[e], images.rows());})
+      ).precede(forward_tasks[forward_tasks.size()-iter_num])           
+       .name("e" + std::to_string(e) + "_S" + std::to_string(e%num_storage));
+
+      if(e >= num_storage) {
+        shuffle_tasks[e-num_storage].precede(t);
+      }
+    }
+  } // End of all epoch
+
+  tf.wait_for_all();
+}
+
+
+
+
+
+inline auto build_dnn() {
   MNIST dnn;
   dnn.epoch_num(10).batch(100).learning_rate(0.001);
   dnn.add_layer(784, 100, Activation::RELU);
@@ -469,7 +585,7 @@ auto build_dnn() {
   return dnn;
 }
 
-void measure_taskflow() {
+inline void measure_taskflow() {
   std::cout << "Taskflow version\n";
   auto dnn = build_dnn();
   auto t1 = std::chrono::high_resolution_clock::now();
@@ -480,7 +596,7 @@ void measure_taskflow() {
 }
 
 
-void measure_sequential() {
+inline void measure_sequential() {
   std::cout << "Sequential version\n";
   auto dnn = build_dnn();
   auto t1 = std::chrono::high_resolution_clock::now();
