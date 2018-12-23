@@ -3,9 +3,12 @@
 #include <experimental/filesystem>
 #include <fstream>
 #include <random>
+#include <memory>
 
 #include <taskflow/taskflow.hpp>  
 #include <Eigen/Dense>
+#include <tbb/task_scheduler_init.h>
+#include <tbb/flow_graph.h>
 
 // Function: read_mnist_label
 inline auto read_mnist_label(const std::experimental::filesystem::path& path) {
@@ -466,12 +469,17 @@ void MNIST::taskflow() {
 
 
 void MNIST::tbb() {
-  tf::Taskflow tf {4};
 
-  std::vector<tf::Task> forward_tasks;
-  std::vector<tf::Task> backward_tasks;
-  std::vector<tf::Task> update_tasks;
-  std::vector<tf::Task> shuffle_tasks;
+  using namespace tbb;
+  using namespace tbb::flow;
+
+  tbb::task_scheduler_init init(std::thread::hardware_concurrency());
+  tbb::flow::graph G;
+
+  std::vector<std::unique_ptr<continue_node<continue_msg>>> forward_tasks;
+  std::vector<std::unique_ptr<continue_node<continue_msg>>> backward_tasks;
+  std::vector<std::unique_ptr<continue_node<continue_msg>>> update_tasks;
+  std::vector<std::unique_ptr<continue_node<continue_msg>>> shuffle_tasks;
 
   const auto num_storage = 4;
 
@@ -484,8 +492,8 @@ void MNIST::tbb() {
   for(auto e=0; e<epoch; e++) {
     for(auto i=0; i<iter_num; i++) {
       auto& f_task = forward_tasks.emplace_back(
-        tf.silent_emplace(
-          [&, iter = i, e=e%num_storage]() {
+        std::make_unique<continue_node<continue_msg>>(G, 
+          [&, iter = i, e=e%num_storage](const continue_msg&) {
             if(iter == 0 && false) validate();
 
             if(iter != 0) {
@@ -506,27 +514,27 @@ void MNIST::tbb() {
             loss(vecs[e]);
           }
         ) 
-      ).name("e" + std::to_string(e) + "_F"+std::to_string(i));
+      );
 
       if(i == 0 && e != 0) {
         auto sz = update_tasks.size();
         for(auto j=1; j<=acts.size() ;j++) {
-          update_tasks[sz-j].precede(f_task);
+          make_edge(*update_tasks[sz-j], *f_task);
         }         
       }
 
       if(i != 0) {
         auto sz = update_tasks.size();
         for(auto j=1; j<=acts.size() ;j++) {
-          update_tasks[sz-j].precede(f_task);
+          make_edge(*update_tasks[sz-j], *f_task);
         }
       }
 
       for(int j=acts.size()-1; j>=0; j--) {
         // backward propagation
         auto& b_task = backward_tasks.emplace_back(
-          tf.silent_emplace(
-            [&, i=j, e=e%num_storage] () {
+          std::make_unique<continue_node<continue_msg>>(G, 
+            [&, i=j, e=e%num_storage] (const continue_msg&) {
               if(i > 0) {
                 backward(i, Ys[i-1].transpose());       
               }
@@ -535,42 +543,44 @@ void MNIST::tbb() {
               }
             }
           )
-        ).name("e" + std::to_string(e) + "_L" + std::to_string(i) +"_B" + std::to_string(j));
+        );
         // update weight 
         auto& u_task = update_tasks.emplace_back(
-          tf.silent_emplace([&, i=j] () {update(i);})
-        ).name("e" + std::to_string(e) + "_L" + std::to_string(i) +"_U" + std::to_string(j));
+          std::make_unique<continue_node<continue_msg>>(G, [&, i=j] (const continue_msg&) {update(i);}));
 
         if(j == acts.size() - 1) {
-          f_task.precede(b_task);
+          make_edge(*f_task, *b_task);
         }
         else {
-          backward_tasks[backward_tasks.size()-2].precede(b_task).precede(update_tasks[update_tasks.size()-2]);
+          make_edge(*backward_tasks[backward_tasks.size()-2], *b_task);
+          make_edge(*backward_tasks[backward_tasks.size()-2], *update_tasks[update_tasks.size()-2]);
         }
-      } // End of backward propagation 
-      backward_tasks.back().precede(update_tasks.back()); 
+      } // End of backward propagation  
+      make_edge(*backward_tasks.back(), *update_tasks.back());
     } // End of all iterations (task flow graph creation)
 
 
     if(e == 0) {
       // No need to shuffle in first epoch
-      shuffle_tasks.emplace_back(tf.silent_emplace([](){}))
-                   .precede(forward_tasks[forward_tasks.size()-iter_num])           
-                   .name("e" + std::to_string(e) + "_S" + std::to_string(e%num_storage));
+      shuffle_tasks.emplace_back(std::make_unique<continue_node<continue_msg>>(G, [](const continue_msg&){}));
+      make_edge(*shuffle_tasks.back(), *forward_tasks[forward_tasks.size()-iter_num]);
     }
     else {
       auto& t = shuffle_tasks.emplace_back(
-        tf.silent_emplace([&, e=e%num_storage]() {shuffle(mats[e], vecs[e], images.rows());})
-      ).precede(forward_tasks[forward_tasks.size()-iter_num])           
-       .name("e" + std::to_string(e) + "_S" + std::to_string(e%num_storage));
+        std::make_unique<continue_node<continue_msg>>(G, [&, e=e%num_storage](const continue_msg&) 
+          {shuffle(mats[e], vecs[e], images.rows());})
+      );
+      make_edge(*t,*forward_tasks[forward_tasks.size()-iter_num]);
 
       if(e >= num_storage) {
-        shuffle_tasks[e-num_storage].precede(t);
+        make_edge(*shuffle_tasks[e-num_storage] ,*t);
       }
     }
   } // End of all epoch
 
-  tf.wait_for_all();
+  for(size_t i=0; i<num_storage; i++) 
+    shuffle_tasks[i]->try_put(continue_msg());
+  G.wait_for_all();
 }
 
 
@@ -585,16 +595,6 @@ inline auto build_dnn() {
   return dnn;
 }
 
-inline void measure_taskflow() {
-  std::cout << "Taskflow version\n";
-  auto dnn = build_dnn();
-  auto t1 = std::chrono::high_resolution_clock::now();
-  dnn.taskflow();
-  auto t2 = std::chrono::high_resolution_clock::now();
-  std::cout << "Taskflow runtime: " << time_diff(t1, t2) << " s\n";
-  dnn.validate();
-}
-
 
 inline void measure_sequential() {
   std::cout << "Sequential version\n";
@@ -606,5 +606,23 @@ inline void measure_sequential() {
   dnn.validate();
 }
 
+inline void measure_taskflow() {
+  std::cout << "Taskflow version\n";
+  auto dnn = build_dnn();
+  auto t1 = std::chrono::high_resolution_clock::now();
+  dnn.taskflow();
+  auto t2 = std::chrono::high_resolution_clock::now();
+  std::cout << "Taskflow runtime: " << time_diff(t1, t2) << " s\n";
+  dnn.validate();
+}
 
+inline void measure_tbb() {
+  std::cout << "TBB version\n";
+  auto dnn = build_dnn();
+  auto t1 = std::chrono::high_resolution_clock::now();
+  dnn.tbb();
+  auto t2 = std::chrono::high_resolution_clock::now();
+  std::cout << "TBB runtime: " << time_diff(t1, t2) << " s\n";
+  dnn.validate();
+}
 

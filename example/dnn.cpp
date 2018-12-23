@@ -8,13 +8,13 @@ int main(int argc, char *argv[]){
       sel = 1;
     }
     else if(::strcmp(argv[1], "tbb") == 0) {
-      assert(false); 
       sel = 2;
     }
   }
 
   switch(sel) {
-    case 1:  measure_taskflow(); break;
+    case 1:  measure_taskflow(); break; 
+    case 2:  measure_tbb(); break;
     default: measure_sequential(); break;
   };
 
