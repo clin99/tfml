@@ -1,8 +1,6 @@
-#include "dnn.hpp"
-
+#include "seq.hpp"
 #include "tbb.hpp"
 #include "tf.hpp"
-#include "seq.hpp"
 
 #define BENCHMARK(LIB)                                                 \
   {                                                                    \
@@ -35,6 +33,6 @@ int main(int argc, char *argv[]){
     default: BENCHMARK(sequential); break;
   };
 
-  return 0;
+  return EXIT_SUCCESS;
 }
 
