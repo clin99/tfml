@@ -730,11 +730,8 @@ struct MNIST {
 int main(int argc, char *argv[]){
   
   MNIST dnn;
-  dnn.epoch_num(50).batch(100).learning_rate(0.001);
+  dnn.epoch_num(10).batch(100).learning_rate(0.001);
   dnn.add_layer(784, 100, Activation::RELU);
-  dnn.add_layer(100, 100, Activation::RELU);
-  dnn.add_layer(100, 100, Activation::RELU);
-  dnn.add_layer(100, 100, Activation::RELU);
   dnn.add_layer(100, 10, Activation::NONE); 
 
   int sel = 0;

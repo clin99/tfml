@@ -306,6 +306,8 @@ struct MNIST {
 
   size_t epoch {0};
   size_t batch_size {1};
+
+  const size_t num_storage = 4;
 };
 
 
@@ -367,7 +369,6 @@ void MNIST::taskflow() {
   std::vector<tf::Task> update_tasks;
   std::vector<tf::Task> shuffle_tasks;
 
-  const auto num_storage = 4;
 
   std::vector<Eigen::MatrixXf> mats(num_storage, images);
   std::vector<Eigen::VectorXi> vecs(num_storage, labels);
@@ -481,7 +482,6 @@ void MNIST::tbb() {
   std::vector<std::unique_ptr<continue_node<continue_msg>>> update_tasks;
   std::vector<std::unique_ptr<continue_node<continue_msg>>> shuffle_tasks;
 
-  const auto num_storage = 4;
 
   std::vector<Eigen::MatrixXf> mats(num_storage, images);
   std::vector<Eigen::VectorXi> vecs(num_storage, labels);
@@ -589,7 +589,7 @@ void MNIST::tbb() {
 
 inline auto build_dnn() {
   MNIST dnn;
-  dnn.epoch_num(10).batch(100).learning_rate(0.001);
+  dnn.epoch_num(20).batch(100).learning_rate(0.001);
   dnn.add_layer(784, 100, Activation::RELU);
   dnn.add_layer(100, 10, Activation::NONE); 
   return dnn;
