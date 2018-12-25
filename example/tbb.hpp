@@ -95,7 +95,6 @@ inline void run_tbb(MNIST& D) {
       make_edge(*backward_tasks.back(), *update_tasks.back());
     } // End of all iterations (task flow graph creation)
 
-
     if(e == 0) {
       // No need to shuffle in first epoch
       shuffle_tasks.emplace_back(std::make_unique<continue_node<continue_msg>>(G, [](const continue_msg&){}));
@@ -114,7 +113,8 @@ inline void run_tbb(MNIST& D) {
     }
   } // End of all epoch
 
-  for(size_t i=0; i<D.num_storage; i++) 
+  auto num_sources = std::min(D.num_storage, shuffle_tasks.size());
+  for(size_t i=0; i<num_sources; i++) 
     shuffle_tasks[i]->try_put(continue_msg());
   G.wait_for_all();
 }
