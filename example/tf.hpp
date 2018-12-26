@@ -11,15 +11,14 @@ inline void run_taskflow(MNIST& D) {
   std::vector<tf::Task> update_tasks;
   std::vector<tf::Task> shuffle_tasks;
 
-  std::vector<Eigen::MatrixXf> mats(D.num_storage, D.images);
-  std::vector<Eigen::VectorXi> vecs(D.num_storage, D.labels);
-
-  // Create task flow graph
-  const auto iter_num = D.images.rows()/D.batch_size;
-
   // Number of parallel shuffle
   const auto num_par_shf = std::min(D.num_storage, D.epoch);
 
+  std::vector<Eigen::MatrixXf> mats(num_par_shf, D.images);
+  std::vector<Eigen::VectorXi> vecs(num_par_shf, D.labels);
+
+  // Create task flow graph
+  const auto iter_num = D.images.rows()/D.batch_size;
 
   for(auto e=0; e<D.epoch; e++) {
     for(auto i=0; i<iter_num; i++) {
