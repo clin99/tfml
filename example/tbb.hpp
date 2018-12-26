@@ -7,7 +7,6 @@
 #include <tbb/flow_graph.h>
 
 inline void run_tbb(MNIST& D) {
-
   using namespace tbb;
   using namespace tbb::flow;
 
@@ -19,18 +18,20 @@ inline void run_tbb(MNIST& D) {
   std::vector<std::unique_ptr<continue_node<continue_msg>>> update_tasks;
   std::vector<std::unique_ptr<continue_node<continue_msg>>> shuffle_tasks;
 
-
   std::vector<Eigen::MatrixXf> mats(D.num_storage, D.images);
   std::vector<Eigen::VectorXi> vecs(D.num_storage, D.labels);
 
   // Create task flow graph
   const auto iter_num = D.images.rows()/D.batch_size;
 
+  // Number of parallel shuffle
+  const auto num_par_shf = std::min(D.num_storage, D.epoch);
+
   for(auto e=0; e<D.epoch; e++) {
     for(auto i=0; i<iter_num; i++) {
       auto& f_task = forward_tasks.emplace_back(
         std::make_unique<continue_node<continue_msg>>(G, 
-          [&, iter = i, e=e%D.num_storage](const continue_msg&) {
+          [&, iter = i, e=e%num_par_shf](const continue_msg&) {
 
             if(iter != 0) {
               D.beg_row += D.batch_size;
@@ -70,7 +71,7 @@ inline void run_tbb(MNIST& D) {
         // backward propagation
         auto& b_task = backward_tasks.emplace_back(
           std::make_unique<continue_node<continue_msg>>(G, 
-            [&, i=j, e=e%D.num_storage] (const continue_msg&) {
+            [&, i=j, e=e%num_par_shf] (const continue_msg&) {
               if(i > 0) {
                 D.backward(i, D.Ys[i-1].transpose());       
               }
@@ -102,19 +103,26 @@ inline void run_tbb(MNIST& D) {
     }
     else {
       auto& t = shuffle_tasks.emplace_back(
-        std::make_unique<continue_node<continue_msg>>(G, [&, e=e%D.num_storage](const continue_msg&) 
+        std::make_unique<continue_node<continue_msg>>(G, [&, e=e%num_par_shf](const continue_msg&) 
           {D.shuffle(mats[e], vecs[e], D.images.rows());})
       );
       make_edge(*t,*forward_tasks[forward_tasks.size()-iter_num]);
 
-      if(e >= D.num_storage) {
-        make_edge(*shuffle_tasks[e-D.num_storage] ,*t);
+      // This shuffle task starts after belows finish
+      //   1. previous shuffle on the same storage
+      //   2. the last backward task of previous epoch on the same storage 
+      if(e >= num_par_shf) {
+        auto prev_e = e - num_par_shf;
+        make_edge(*shuffle_tasks[prev_e] ,*t);
+
+        int task_id = (prev_e+1)*iter_num*D.acts.size() - 1;
+        make_edge(*backward_tasks[task_id], *t);
       }
     }
   } // End of all epoch
 
-  auto num_sources = std::min(D.num_storage, shuffle_tasks.size());
-  for(size_t i=0; i<num_sources; i++) 
+
+  for(size_t i=0; i<num_par_shf; i++) 
     shuffle_tasks[i]->try_put(continue_msg());
   G.wait_for_all();
 }

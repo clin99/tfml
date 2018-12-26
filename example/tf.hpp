@@ -17,11 +17,15 @@ inline void run_taskflow(MNIST& D) {
   // Create task flow graph
   const auto iter_num = D.images.rows()/D.batch_size;
 
+  // Number of parallel shuffle
+  const auto num_par_shf = std::min(D.num_storage, D.epoch);
+
+
   for(auto e=0; e<D.epoch; e++) {
     for(auto i=0; i<iter_num; i++) {
       auto& f_task = forward_tasks.emplace_back(
         tf.silent_emplace(
-          [&, iter = i, e=e%D.num_storage]() {
+          [&, iter = i, e=e%num_par_shf]() {
 
             if(iter != 0) {
               D.beg_row += D.batch_size;
@@ -61,7 +65,7 @@ inline void run_taskflow(MNIST& D) {
         // backward propagation
         auto& b_task = backward_tasks.emplace_back(
           tf.silent_emplace(
-            [&, i=j, e=e%D.num_storage] () {
+            [&, i=j, e=e%num_par_shf] () {
               if(i > 0) {
                 D.backward(i, D.Ys[i-1].transpose());       
               }
@@ -91,16 +95,23 @@ inline void run_taskflow(MNIST& D) {
       // No need to shuffle in first epoch
       shuffle_tasks.emplace_back(tf.silent_emplace([](){}))
                    .precede(forward_tasks[forward_tasks.size()-iter_num])           
-                   .name("e" + std::to_string(e) + "_S" + std::to_string(e%D.num_storage));
+                   .name("e" + std::to_string(e) + "_S" + std::to_string(e%num_par_shf));
     }
     else {
       auto& t = shuffle_tasks.emplace_back(
-        tf.silent_emplace([&, e=e%D.num_storage]() {D.shuffle(mats[e], vecs[e], D.images.rows());})
+        tf.silent_emplace([&, e=e%num_par_shf]() {D.shuffle(mats[e], vecs[e], D.images.rows());})
       ).precede(forward_tasks[forward_tasks.size()-iter_num])           
-       .name("e" + std::to_string(e) + "_S" + std::to_string(e%D.num_storage));
+       .name("e" + std::to_string(e) + "_S" + std::to_string(e%num_par_shf));
 
-      if(e >= D.num_storage) {
-        shuffle_tasks[e-D.num_storage].precede(t);
+      // This shuffle task starts after belows finish
+      //   1. previous shuffle on the same storage
+      //   2. the last backward task of previous epoch on the same storage 
+      if(e >= num_par_shf) {
+        auto prev_e = e - num_par_shf;
+        shuffle_tasks[prev_e].precede(t);
+
+        int task_id = (prev_e+1)*iter_num*D.acts.size() - 1;
+        backward_tasks[task_id].precede(t);
       }
     }
   } // End of all epoch
