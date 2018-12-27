@@ -15,16 +15,8 @@
   }
 
 
-
 int main(int argc, char *argv[]){
 
-  ////run_omp4();
-  //BENCHMARK(omp6);
-  //BENCHMARK(tbb); 
-  ////BENCHMARK(sequential);
-  ////BENCHMARK(taskflow);
-  //return 0;
-  
   int sel = 0;
   if(argc > 1) {
     if(::strcmp(argv[1], "taskflow") == 0) {
