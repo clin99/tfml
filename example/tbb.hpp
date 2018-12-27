@@ -27,45 +27,21 @@ inline void run_tbb(MNIST& D) {
   // Create task flow graph
   const auto iter_num = D.images.rows()/D.batch_size;
 
-
   for(auto e=0; e<D.epoch; e++) {
     for(auto i=0; i<iter_num; i++) {
       auto& f_task = forward_tasks.emplace_back(
         std::make_unique<continue_node<continue_msg>>(G, 
           [&, iter = i, e=e%num_par_shf](const continue_msg&) {
-
-            if(iter != 0) {
-              D.beg_row += D.batch_size;
-              if(D.beg_row >= D.images.rows()) {
-                D.beg_row = 0;
-              }
-            }
-            for(size_t i=0; i<D.acts.size(); i++) {
-              if(i == 0){
-                D.forward(i, mats[e].middleRows(D.beg_row, D.batch_size));
-              }
-              else {
-                D.forward(i, D.Ys[i-1]);
-              }
-            }
-
-            D.loss(vecs[e]);
+            forward_task(D, i, e, mats, vecs);
           }
         ) 
       );
 
-      if(i == 0 && e != 0) {
+      if(i != 0 || (i == 0 && e != 0)) {
         auto sz = update_tasks.size();
         for(auto j=1; j<=D.acts.size() ;j++) {
           make_edge(*update_tasks[sz-j], *f_task);
         }         
-      }
-
-      if(i != 0) {
-        auto sz = update_tasks.size();
-        for(auto j=1; j<=D.acts.size() ;j++) {
-          make_edge(*update_tasks[sz-j], *f_task);
-        }
       }
 
       for(int j=D.acts.size()-1; j>=0; j--) {
@@ -73,12 +49,7 @@ inline void run_tbb(MNIST& D) {
         auto& b_task = backward_tasks.emplace_back(
           std::make_unique<continue_node<continue_msg>>(G, 
             [&, i=j, e=e%num_par_shf] (const continue_msg&) {
-              if(i > 0) {
-                D.backward(i, D.Ys[i-1].transpose());       
-              }
-              else {
-                D.backward(i, mats[e].middleRows(D.beg_row, D.batch_size).transpose());
-              }
+              backward_task(D, i, e, mats);
             }
           )
         );
@@ -91,10 +62,9 @@ inline void run_tbb(MNIST& D) {
         }
         else {
           make_edge(*backward_tasks[backward_tasks.size()-2], *b_task);
-          make_edge(*backward_tasks[backward_tasks.size()-2], *update_tasks[update_tasks.size()-2]);
         }
+        make_edge(*b_task, *u_task);
       } // End of backward propagation  
-      make_edge(*backward_tasks.back(), *update_tasks.back());
     } // End of all iterations (task flow graph creation)
 
     if(e == 0) {
@@ -121,7 +91,6 @@ inline void run_tbb(MNIST& D) {
       }
     }
   } // End of all epoch
-
 
   for(size_t i=0; i<num_par_shf; i++) 
     shuffle_tasks[i]->try_put(continue_msg());

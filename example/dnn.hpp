@@ -303,12 +303,41 @@ struct MNIST {
 };
 
 
+inline void forward_task(MNIST& D, size_t iter, size_t e, 
+  std::vector<Eigen::MatrixXf>& mats, 
+  std::vector<Eigen::VectorXi>& vecs) {
+  if(iter != 0) {
+    D.beg_row += D.batch_size;
+    if(D.beg_row >= D.images.rows()) {
+      D.beg_row = 0;
+    }
+  }
+  for(size_t i=0; i<D.acts.size(); i++) {
+    if(i == 0){
+      D.forward(i, mats[e].middleRows(D.beg_row, D.batch_size));
+    }
+    else {
+      D.forward(i, D.Ys[i-1]);
+    }
+  }
+
+  D.loss(vecs[e]);
+}
+
+inline void backward_task(MNIST& D, size_t i, size_t e, std::vector<Eigen::MatrixXf>& mats) {
+  if(i > 0) {
+    D.backward(i, D.Ys[i-1].transpose());       
+  }
+  else {
+    D.backward(i, mats[e].middleRows(D.beg_row, D.batch_size).transpose());
+  }
+}
+
 
 inline auto build_dnn() {
   MNIST dnn;
   dnn.epoch_num(10).batch(100).learning_rate(0.001);
   dnn.add_layer(784, 10, Activation::RELU);
-  dnn.add_layer(10, 10, Activation::SIGMOID);
   dnn.add_layer(10, 10, Activation::NONE); 
   return dnn;
 }

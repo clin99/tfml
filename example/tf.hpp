@@ -4,7 +4,7 @@
 #include <taskflow/taskflow.hpp>  
 
 inline void run_taskflow(MNIST& D) {
-  tf::Taskflow tf {4};
+  tf::Taskflow tf {std::thread::hardware_concurrency()};
 
   std::vector<tf::Task> forward_tasks;
   std::vector<tf::Task> backward_tasks;
@@ -25,39 +25,16 @@ inline void run_taskflow(MNIST& D) {
       auto& f_task = forward_tasks.emplace_back(
         tf.silent_emplace(
           [&, iter = i, e=e%num_par_shf]() {
-
-            if(iter != 0) {
-              D.beg_row += D.batch_size;
-              if(D.beg_row >= D.images.rows()) {
-                D.beg_row = 0;
-              }
-            }
-            for(size_t i=0; i<D.acts.size(); i++) {
-              if(i == 0){
-                D.forward(i, mats[e].middleRows(D.beg_row, D.batch_size));
-              }
-              else {
-                D.forward(i, D.Ys[i-1]);
-              }
-            }
-
-            D.loss(vecs[e]);
+            forward_task(D, i, e, mats, vecs);
           }
         ) 
       ).name("e" + std::to_string(e) + "_F"+std::to_string(i));
 
-      if(i == 0 && e != 0) {
+      if(i != 0 || (i == 0 && e != 0)) {
         auto sz = update_tasks.size();
         for(auto j=1; j<=D.acts.size() ;j++) {
           update_tasks[sz-j].precede(f_task);
         }         
-      }
-
-      if(i != 0) {
-        auto sz = update_tasks.size();
-        for(auto j=1; j<=D.acts.size() ;j++) {
-          update_tasks[sz-j].precede(f_task);
-        }
       }
 
       for(int j=D.acts.size()-1; j>=0; j--) {
@@ -65,12 +42,7 @@ inline void run_taskflow(MNIST& D) {
         auto& b_task = backward_tasks.emplace_back(
           tf.silent_emplace(
             [&, i=j, e=e%num_par_shf] () {
-              if(i > 0) {
-                D.backward(i, D.Ys[i-1].transpose());       
-              }
-              else {
-                D.backward(i, mats[e].middleRows(D.beg_row, D.batch_size).transpose());
-              }
+              backward_task(D, i, e, mats);
             }
           )
         ).name("e" + std::to_string(e) + "_L" + std::to_string(i) +"_B" + std::to_string(j));
@@ -83,10 +55,10 @@ inline void run_taskflow(MNIST& D) {
           f_task.precede(b_task);
         }
         else {
-          backward_tasks[backward_tasks.size()-2].precede(b_task).precede(update_tasks[update_tasks.size()-2]);
+          backward_tasks[backward_tasks.size()-2].precede(b_task);
         }
+        b_task.precede(u_task);
       } // End of backward propagation 
-      backward_tasks.back().precede(update_tasks.back()); 
     } // End of all iterations (task flow graph creation)
 
 
