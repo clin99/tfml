@@ -37,8 +37,6 @@ void omp_update_task(MNIST& D, size_t i) {
   D.update(i);
 }
 
-
-
 inline void run_omp(MNIST& D) {
   // Create task flow graph
   const auto iter_num = D.images.rows()/D.batch_size;
@@ -57,7 +55,6 @@ inline void run_omp(MNIST& D) {
   auto dep_f = new int [D.epoch * iter_num];
   auto dep_b = new int [D.epoch * prop_per_e];
   auto dep_u = new int [D.epoch * prop_per_e];
-
 
   // Each iteration has num_layers backward tasks 
   // Each epoch has iter_num iterations 
@@ -122,7 +119,6 @@ inline void run_omp(MNIST& D) {
              omp_update_task(D, j);
            }
 
-
          }
        }
     } // End of omp single 
@@ -133,5 +129,4 @@ inline void run_omp(MNIST& D) {
   delete [] dep_b;
   delete [] dep_u;
 }
-
 
