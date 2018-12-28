@@ -6,6 +6,8 @@
 #include <tbb/task_scheduler_init.h>
 #include <tbb/flow_graph.h>
 
+// TODO: add new lines if too long (80)
+
 inline void run_tbb(MNIST& D) {
   using namespace tbb;
   using namespace tbb::flow;
@@ -92,8 +94,9 @@ inline void run_tbb(MNIST& D) {
     }
   } // End of all epoch
 
-  for(size_t i=0; i<num_par_shf; i++) 
+  for(size_t i=0; i<num_par_shf; i++) {
     shuffle_tasks[i]->try_put(continue_msg());
+  }
   G.wait_for_all();
 }
 

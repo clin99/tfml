@@ -3,6 +3,8 @@
 #include "dnn.hpp"
 #include <taskflow/taskflow.hpp>  
 
+//TODO: remove name 
+//      make number of threads as input argu
 inline void run_taskflow(MNIST& D) {
   tf::Taskflow tf {std::thread::hardware_concurrency()};
 

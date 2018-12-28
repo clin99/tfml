@@ -299,7 +299,8 @@ struct MNIST {
   size_t epoch {0};
   size_t batch_size {1};
 
-  const size_t num_storage = 3;
+  // 2x number of threads
+  const size_t num_storage = 8;
 };
 
 
@@ -336,9 +337,12 @@ inline void backward_task(MNIST& D, size_t i, size_t e, std::vector<Eigen::Matri
 
 inline auto build_dnn() {
   MNIST dnn;
-  dnn.epoch_num(10).batch(100).learning_rate(0.001);
-  dnn.add_layer(784, 10, Activation::RELU);
-  dnn.add_layer(10, 10, Activation::NONE); 
+  dnn.epoch_num(64).batch(60).learning_rate(0.001);
+  dnn.add_layer(784, 32, Activation::RELU);
+  dnn.add_layer(32, 32, Activation::RELU);
+  dnn.add_layer(32, 32, Activation::RELU);
+  dnn.add_layer(32, 32, Activation::RELU);
+  dnn.add_layer(32, 10, Activation::NONE); 
   return dnn;
 }
 

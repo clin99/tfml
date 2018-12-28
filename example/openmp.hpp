@@ -25,7 +25,7 @@ inline void run_omp(MNIST& D) {
   // Each iteration has num_layers backward tasks 
   // Each epoch has iter_num iterations 
   // Total # of backward_tasks = iter_num * num_layers 
-  #pragma omp parallel 
+  #pragma omp parallel
   {
     #pragma omp single
     {
